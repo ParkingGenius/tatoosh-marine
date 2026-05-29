@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0b1f3a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tatoosh">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Tatoosh Marine — Neah Bay Conditions</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0b1f3a;
+    color: #e8eef7;
+    min-height: 100vh;
+  }
+  body {
+    background: linear-gradient(180deg, #0b1f3a 0%, #112d52 60%, #0b1f3a 100%);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  header {
+    padding: max(env(safe-area-inset-top), 16px) 16px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #1d3a66;
+    position: sticky; top: 0;
+    background: rgba(11,31,58,0.95);
+    backdrop-filter: blur(8px);
+    z-index: 10;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: 0.3px; }
+  header h1 .sub { display: block; font-size: 11px; font-weight: 400; color: #8aa3c8; margin-top: 2px; }
+  .refresh-btn {
+    background: #1d3a66; border: none; color: #e8eef7;
+    padding: 8px 12px; border-radius: 8px; font-size: 14px;
+    cursor: pointer;
+  }
+  .refresh-btn:active { background: #2a4d80; }
+  main { padding: 16px; max-width: 720px; margin: 0 auto; }
+  .card {
+    background: #14305a;
+    border: 1px solid #1d3a66;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+  }
+  .card h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #8aa3c8;
+    margin: 0 0 10px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  .stations { display: flex; flex-direction: column; gap: 8px; }
+  .station {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 10px 12px;
+    background: #0e2547;
+    border-radius: 8px;
+    border-left: 3px solid #4d9bff;
+  }
+  .station .name { font-weight: 600; font-size: 14px; }
+  .station .dist { font-size: 11px; color: #8aa3c8; }
+  .station .obs {
+    grid-column: 1 / -1;
+    font-size: 13px;
+    color: #c5d4ec;
+    margin-top: 4px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 6px 14px;
+  }
+  .obs .lbl { color: #8aa3c8; font-size: 11px; }
+  .obs .val { font-weight: 600; font-size: 14px; }
+  .age { font-size: 10px; color: #6b85a9; font-style: italic; }
+  .summary {
+    font-size: 14px; line-height: 1.5; color: #d9e3f3;
+    white-space: pre-wrap;
+  }
+  .bar-card { border-left: 4px solid #ffb74d; }
+  .bar-status {
+    font-size: 20px; font-weight: 700; margin: 6px 0 8px;
+  }
+  .bar-status.calm { color: #6ee7a7; }
+  .bar-status.fair { color: #ffd966; }
+  .bar-status.rough { color: #ff8a65; }
+  .bar-status.danger { color: #ff5a5a; }
+  .tides { font-size: 14px; line-height: 1.7; }
+  .tide-row { display: flex; justify-content: space-between; }
+  .tide-row .t { color: #8aa3c8; }
+  .loading { color: #8aa3c8; font-size: 13px; font-style: italic; }
+  .err { color: #ff8a65; font-size: 12px; }
+  footer {
+    text-align: center; font-size: 11px; color: #6b85a9;
+    padding: 16px; line-height: 1.6;
+  }
+  footer a { color: #8aa3c8; }
+  .timestamp { font-size: 11px; color: #6b85a9; }
+  .fish-tag {
+    display: inline-block; padding: 2px 6px;
+    background: #1d3a66; border-radius: 4px;
+    font-size: 10px; color: #ffd966;
+    margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tatoosh Marine
+    <span class="sub">Neah Bay · 65 mi radius</span>
+  </h1>
+  <button class="refresh-btn" onclick="loadAll()">↻</button>
+</header>
+<main>
+
+  <div class="card bar-card">
+    <h2>Neah Bay Bar / Entrance</h2>
+    <div id="bar-status" class="bar-status loading">Checking…</div>
+    <div id="bar-detail" class="summary"></div>
+  </div>
+
+  <div class="card">
+    <h2>Marine Zone Forecast (PZZ150)</h2>
+    <div id="forecast" class="summary loading">Loading NWS forecast…</div>
+  </div>
+
+  <div class="card">
+    <h2>Buoy & Station Observations</h2>
+    <div id="stations" class="stations">
+      <div class="loading">Fetching live buoy data…</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Neah Bay Tides (next 48h)</h2>
+    <div id="tides" class="tides loading">Loading tide predictions…</div>
+  </div>
+
+  <div class="card">
+    <h2>SST & Fishing Notes</h2>
+    <div id="sst" class="summary loading">Loading sea surface temps…</div>
+  </div>
+
+  <div class="timestamp" id="updated"></div>
+</main>
+<footer>
+  Data: NOAA NDBC · NWS · CO-OPS Tides.<br>
+  Use official sources before going out. Not for navigation.<br>
+  <span id="version">v0.1</span>
+</footer>
+
+<script>
+// ============ STATIONS (within 65 mi of Tatoosh 48.39N 124.74W) ============
+const STATIONS = [
+  { id: '46087',  name: 'Neah Bay Buoy',       dist: 7.1,  primary: true },
+  { id: 'TTIW1',  name: 'Tatoosh Island',      dist: 0.1,  primary: true },
+  { id: 'NEAW1',  name: 'Neah Bay (land)',     dist: 5.7 },
+  { id: 'LAPW1',  name: 'La Push',             dist: 33.4 },
+  { id: 'DESW1',  name: 'Destruction Island',  dist: 50.7 },
+  { id: 'PTAW1',  name: 'Port Angeles',        dist: 62.4 },
+  // Just outside 65mi but very useful as context
+  { id: '46041',  name: 'Cape Elizabeth',      dist: 71.8, ext: true },
+  { id: '46088',  name: 'New Dungeness',       dist: 72.2, ext: true },
+];
+
+const TIDE_STATION = '9443090'; // Neah Bay
+const FORECAST_ZONE = 'PZZ150'; // Coastal waters Cape Flattery to James Island out 10 nm
+
+// ============ UNIT HELPERS ============
+const msToKt = (v) => v * 1.94384;
+const mToFt = (v) => v * 3.28084;
+const cToF = (v) => v * 9/5 + 32;
+const fmt = (v, d=1) => (v == null || isNaN(v)) ? '—' : v.toFixed(d);
+const cardinal = (deg) => {
+  if (deg == null || isNaN(deg)) return '';
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg/22.5) % 16];
+};
+const ago = (d) => {
+  if (!d) return '';
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 60) return mins + ' min ago';
+  const hrs = Math.floor(mins/60);
+  return hrs + 'h ' + (mins%60) + 'm ago';
+};
+
+// ============ NDBC PARSER (whitespace-delimited realtime2 .txt) ============
+// Columns: YY MM DD hh mm WDIR WSPD GST WVHT DPD APD MWD PRES ATMP WTMP DEWP VIS PTDY TIDE
+function parseNDBC(text) {
+  const lines = text.trim().split('\n').filter(l => l && !l.startsWith('#'));
+  if (!lines.length) return null;
+  const cols = lines[0].split(/\s+/);
+  const headerLine = text.trim().split('\n').find(l => l.startsWith('#YY'));
+  let headers = null;
+  if (headerLine) {
+    headers = headerLine.replace(/^#/,'').trim().split(/\s+/);
+  } else {
+    headers = ['YY','MM','DD','hh','mm','WDIR','WSPD','GST','WVHT','DPD','APD','MWD','PRES','ATMP','WTMP','DEWP','VIS','PTDY','TIDE'];
+  }
+  const row = {};
+  cols.forEach((v,i) => { row[headers[i]] = v; });
+  const parse = (k) => {
+    const v = row[k];
+    if (v === undefined || v === 'MM' || v === '999.0' || v === '99.0' || v === '999' || v === '99') return null;
+    const n = parseFloat(v);
+    return isNaN(n) ? null : n;
+  };
+  const y = parseInt(row.YY);
+  const yr = y < 100 ? 2000 + y : y;
+  const ts = new Date(Date.UTC(yr, parseInt(row.MM)-1, parseInt(row.DD), parseInt(row.hh), parseInt(row.mm || 0)));
+  return {
+    time: ts,
+    windDir: parse('WDIR'),
+    windKt: parse('WSPD') != null ? msToKt(parse('WSPD')) : null,
+    gustKt: parse('GST') != null ? msToKt(parse('GST')) : null,
+    waveFt: parse('WVHT') != null ? mToFt(parse('WVHT')) : null,
+    dpd: parse('DPD'),
+    apd: parse('APD'),
+    mwd: parse('MWD'),
+    pres: parse('PRES'),
+    airF: parse('ATMP') != null ? cToF(parse('ATMP')) : null,
+    sstF: parse('WTMP') != null ? cToF(parse('WTMP')) : null,
+  };
+}
+
+// ============ FETCH WITH CORS FALLBACK ============
+async function fetchText(url) {
+  // Try direct first
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (r.ok) return await r.text();
+  } catch (e) { /* fall through */ }
+  // CORS proxy fallback (public, no key)
+  try {
+    const proxy = 'https://corsproxy.io/?' + encodeURIComponent(url);
+    const r = await fetch(proxy, { cache: 'no-store' });
+    if (r.ok) return await r.text();
+  } catch (e) { /* fall through */ }
+  return null;
+}
+
+async function fetchJSON(url, headers = {}) {
+  try {
+    const r = await fetch(url, { cache: 'no-store', headers });
+    if (r.ok) return await r.json();
+  } catch (e) { /* fall through */ }
+  try {
+    const proxy = 'https://corsproxy.io/?' + encodeURIComponent(url);
+    const r = await fetch(proxy, { cache: 'no-store' });
+    if (r.ok) return await r.json();
+  } catch (e) {}
+  return null;
+}
+
+// ============ LOAD BUOY OBS ============
+async function loadStations() {
+  const el = document.getElementById('stations');
+  el.innerHTML = '';
+  const results = await Promise.all(STATIONS.map(async (s) => {
+    const url = `https://www.ndbc.noaa.gov/data/realtime2/${s.id}.txt`;
+    const text = await fetchText(url);
+    let obs = null;
+    if (text) {
+      try { obs = parseNDBC(text); } catch(e) { console.warn('parse err', s.id, e); }
+    }
+    return { station: s, obs };
+  }));
+
+  // Cache primary buoy data for bar crossing analysis
+  const primary = results.find(r => r.station.id === '46087');
+  if (primary && primary.obs) {
+    window.__primaryObs = primary.obs;
+    updateBarStatus(primary.obs);
+    updateSST(results);
+  } else {
+    document.getElementById('bar-status').textContent = 'Data unavailable';
+    document.getElementById('bar-status').className = 'bar-status';
+  }
+
+  for (const { station, obs } of results) {
+    const div = document.createElement('div');
+    div.className = 'station';
+    let obsHTML = '<div class="loading">No current data</div>';
+    if (obs) {
+      const parts = [];
+      if (obs.windKt != null) {
+        const dir = cardinal(obs.windDir);
+        const g = obs.gustKt != null && obs.gustKt > obs.windKt + 1 ? ` G${fmt(obs.gustKt,0)}` : '';
+        parts.push(`<div><div class="lbl">Wind</div><div class="val">${dir} ${fmt(obs.windKt,0)}${g} kt</div></div>`);
+      }
+      if (obs.waveFt != null) {
+        const per = obs.dpd != null ? ` @ ${fmt(obs.dpd,0)}s` : '';
+        parts.push(`<div><div class="lbl">Seas</div><div class="val">${fmt(obs.waveFt,1)} ft${per}</div></div>`);
+      }
+      if (obs.sstF != null) {
+        parts.push(`<div><div class="lbl">SST <span class="fish-tag">FISH</span></div><div class="val">${fmt(obs.sstF,1)}°F</div></div>`);
+      }
+      if (obs.airF != null) {
+        parts.push(`<div><div class="lbl">Air</div><div class="val">${fmt(obs.airF,0)}°F</div></div>`);
+      }
+      if (obs.pres != null) {
+        parts.push(`<div><div class="lbl">Pres</div><div class="val">${fmt(obs.pres,1)} hPa</div></div>`);
+      }
+      obsHTML = `<div class="obs">${parts.join('')}</div>
+                 <div class="age">${ago(obs.time)}</div>`;
+    }
+    const extTag = station.ext ? ' <span class="fish-tag" style="color:#8aa3c8">EXT</span>' : '';
+    div.innerHTML = `
+      <div>
+        <div class="name">${station.name}${extTag}</div>
+        <div class="dist">${station.id} · ${station.dist.toFixed(1)} mi</div>
+      </div>
+      <div></div>
+      ${obsHTML}`;
+    el.appendChild(div);
+  }
+}
+
+// ============ BAR CROSSING ANALYSIS ============
+function updateBarStatus(obs) {
+  const statusEl = document.getElementById('bar-status');
+  const detailEl = document.getElementById('bar-detail');
+
+  let level = 'calm', label = 'Calm — favorable';
+  const wind = obs.windKt || 0;
+  const gust = obs.gustKt || wind;
+  const sea = obs.waveFt || 0;
+  const period = obs.dpd || 0;
+
+  // Heuristic bar conditions
+  if (gust >= 30 || sea >= 10 || (sea >= 6 && period <= 8)) {
+    level = 'danger'; label = 'Hazardous — small craft should not cross';
+  } else if (gust >= 20 || sea >= 6 || (sea >= 4 && period <= 8)) {
+    level = 'rough'; label = 'Rough — caution, experienced only';
+  } else if (gust >= 15 || sea >= 4) {
+    level = 'fair'; label = 'Fair — manageable for most';
+  }
+  statusEl.textContent = label;
+  statusEl.className = 'bar-status ' + level;
+
+  const lines = [];
+  lines.push(`Wind ${cardinal(obs.windDir)} ${fmt(wind,0)} kt${obs.gustKt > wind+1 ? ', gusts ' + fmt(gust,0) + ' kt' : ''}`);
+  lines.push(`Seas ${fmt(sea,1)} ft @ ${fmt(period,0)}s${period < 8 && sea >= 3 ? ' (steep, choppy)' : period >= 12 ? ' (long-period swell)' : ''}`);
+  if (obs.pres != null) {
+    lines.push(`Pressure ${fmt(obs.pres,1)} hPa`);
+  }
+  detailEl.textContent = lines.join('\n');
+}
+
+// ============ SST / FISH NOTES ============
+function updateSST(results) {
+  const el = document.getElementById('sst');
+  const ssts = results
+    .filter(r => r.obs && r.obs.sstF != null)
+    .map(r => ({ name: r.station.name, sst: r.obs.sstF }));
+  if (!ssts.length) {
+    el.textContent = 'No SST data right now.';
+    return;
+  }
+  const lines = ssts.map(s => `${s.name}: ${fmt(s.sst,1)}°F`);
+  // Salmon/tuna heuristics
+  const max = Math.max(...ssts.map(s => s.sst));
+  const min = Math.min(...ssts.map(s => s.sst));
+  let note = '';
+  if (max >= 58) note = '\n\nWarm water (>58°F) — albacore tuna possible offshore.';
+  else if (max >= 54) note = '\n\nTransitional water — coho/chinook likely active.';
+  else note = '\n\nCool nearshore water — salmon focus, look for tide rips & bait.';
+  if (max - min >= 2) note += `\nΔ${fmt(max-min,1)}°F across area — watch for temp breaks (good fish edges).`;
+  el.textContent = lines.join('\n') + note;
+}
+
+// ============ NWS ZONE FORECAST ============
+async function loadForecast() {
+  const el = document.getElementById('forecast');
+  const url = `https://api.weather.gov/zones/forecast/${FORECAST_ZONE}/forecast`;
+  const data = await fetchJSON(url, { 'Accept': 'application/geo+json' });
+  if (!data || !data.properties || !data.properties.periods) {
+    el.innerHTML = '<span class="err">Could not load NWS forecast. Try again.</span>';
+    return;
+  }
+  const periods = data.properties.periods.slice(0, 6);
+  el.innerHTML = periods.map(p =>
+    `<div style="margin-bottom:8px;"><b style="color:#9cc4ff;">${p.name}</b><br>${p.detailedForecast}</div>`
+  ).join('');
+}
+
+// ============ TIDES ============
+async function loadTides() {
+  const el = document.getElementById('tides');
+  const now = new Date();
+  const fmtDate = (d) => d.toISOString().slice(0,10).replace(/-/g,'');
+  const end = new Date(now.getTime() + 48*3600*1000);
+  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=predictions&application=tatoosh_app&begin_date=${fmtDate(now)}&end_date=${fmtDate(end)}&datum=MLLW&station=${TIDE_STATION}&time_zone=lst_ldt&units=english&interval=hilo&format=json`;
+  const data = await fetchJSON(url);
+  if (!data || !data.predictions) {
+    el.innerHTML = '<span class="err">Could not load tides.</span>';
+    return;
+  }
+  el.innerHTML = data.predictions.map(p => {
+    const d = new Date(p.t.replace(' ','T'));
+    const day = d.toLocaleDateString([], { weekday:'short', month:'short', day:'numeric' });
+    const time = d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+    const type = p.type === 'H' ? 'High' : 'Low';
+    const color = p.type === 'H' ? '#9cc4ff' : '#ffd966';
+    return `<div class="tide-row"><span class="t">${day} ${time}</span><span style="color:${color}"><b>${type}</b> ${parseFloat(p.v).toFixed(1)} ft</span></div>`;
+  }).join('');
+}
+
+// ============ MAIN ============
+async function loadAll() {
+  document.getElementById('updated').textContent = 'Loading…';
+  await Promise.all([loadStations(), loadForecast(), loadTides()]);
+  const now = new Date();
+  document.getElementById('updated').textContent =
+    'Last updated ' + now.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+}
+
+// Register service worker for PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+
+loadAll();
+// Auto-refresh every 10 minutes when visible
+setInterval(() => { if (!document.hidden) loadAll(); }, 10*60*1000);
+</script>
+</body>
+</html>
