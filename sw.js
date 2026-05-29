@@ -2,7 +2,7 @@
 // Strategy: cache the app shell so it opens offline, network-first for data
 // so when online you always see fresh buoy/tide/forecast data.
 
-const CACHE = 'tatoosh-shell-v1';
+const CACHE = 'tatoosh-shell-v2';
 const SHELL = [
   './',
   './index.html',

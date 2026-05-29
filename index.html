@@ -155,14 +155,14 @@
 <footer>
   Data: NOAA NDBC · NWS · CO-OPS Tides.<br>
   Use official sources before going out. Not for navigation.<br>
-  <span id="version">v0.1</span>
+  <span id="version">v0.2</span>
 </footer>
 
 <script>
 // ============ STATIONS (within 65 mi of Tatoosh 48.39N 124.74W) ============
 const STATIONS = [
   { id: '46087',  name: 'Neah Bay Buoy',       dist: 7.1,  primary: true },
-  { id: 'TTIW1',  name: 'Tatoosh Island',      dist: 0.1,  primary: true },
+  // TTIW1 disestablished 2017-11-30 — removed
   { id: 'NEAW1',  name: 'Neah Bay (land)',     dist: 5.7 },
   { id: 'LAPW1',  name: 'La Push',             dist: 33.4 },
   { id: 'DESW1',  name: 'Destruction Island',  dist: 50.7 },
@@ -248,16 +248,25 @@ async function fetchText(url) {
   return null;
 }
 
-async function fetchJSON(url, headers = {}) {
+async function fetchJSON(url) {
+  // No custom headers — avoids CORS preflight on api.weather.gov
   try {
-    const r = await fetch(url, { cache: 'no-store', headers });
-    if (r.ok) return await r.json();
-  } catch (e) { /* fall through */ }
+    const r = await fetch(url, { cache: 'no-store' });
+    if (r.ok) {
+      const text = await r.text();
+      try { return JSON.parse(text); } catch(e) { console.warn('json parse', url, e); }
+    } else {
+      console.warn('direct fetch not ok', url, r.status);
+    }
+  } catch (e) { console.warn('direct fetch err', url, e.message); }
   try {
     const proxy = 'https://corsproxy.io/?' + encodeURIComponent(url);
     const r = await fetch(proxy, { cache: 'no-store' });
-    if (r.ok) return await r.json();
-  } catch (e) {}
+    if (r.ok) {
+      const text = await r.text();
+      try { return JSON.parse(text); } catch(e) { console.warn('proxy json parse', url, e); }
+    }
+  } catch (e) { console.warn('proxy fetch err', url, e.message); }
   return null;
 }
 
@@ -279,7 +288,15 @@ async function loadStations() {
   const primary = results.find(r => r.station.id === '46087');
   if (primary && primary.obs) {
     window.__primaryObs = primary.obs;
-    updateBarStatus(primary.obs);
+    // Find wave fallback if 46087 isn't reporting waves
+    let waveSource = null;
+    if (primary.obs.waveFt == null) {
+      const waveBuoy = results
+        .filter(r => r.obs && r.obs.waveFt != null)
+        .sort((a,b) => a.station.dist - b.station.dist)[0];
+      if (waveBuoy) waveSource = waveBuoy;
+    }
+    updateBarStatus(primary.obs, waveSource);
     updateSST(results);
   } else {
     document.getElementById('bar-status').textContent = 'Data unavailable';
@@ -326,30 +343,40 @@ async function loadStations() {
 }
 
 // ============ BAR CROSSING ANALYSIS ============
-function updateBarStatus(obs) {
+function updateBarStatus(obs, waveSource) {
   const statusEl = document.getElementById('bar-status');
   const detailEl = document.getElementById('bar-detail');
 
-  let level = 'calm', label = 'Calm — favorable';
   const wind = obs.windKt || 0;
   const gust = obs.gustKt || wind;
-  const sea = obs.waveFt || 0;
-  const period = obs.dpd || 0;
+  // Use wave data from primary (46087) if available, else fallback buoy
+  const waveObs = (obs.waveFt != null) ? obs : (waveSource ? waveSource.obs : null);
+  const sea = waveObs ? waveObs.waveFt : null;
+  const period = waveObs ? waveObs.dpd : null;
 
-  // Heuristic bar conditions
-  if (gust >= 30 || sea >= 10 || (sea >= 6 && period <= 8)) {
+  let level = 'calm', label = 'Calm — favorable';
+  // Heuristic bar conditions (wave check skipped if sea == null)
+  if (gust >= 30 || (sea != null && (sea >= 10 || (sea >= 6 && period != null && period <= 8)))) {
     level = 'danger'; label = 'Hazardous — small craft should not cross';
-  } else if (gust >= 20 || sea >= 6 || (sea >= 4 && period <= 8)) {
+  } else if (gust >= 20 || (sea != null && (sea >= 6 || (sea >= 4 && period != null && period <= 8)))) {
     level = 'rough'; label = 'Rough — caution, experienced only';
-  } else if (gust >= 15 || sea >= 4) {
+  } else if (gust >= 15 || (sea != null && sea >= 4)) {
     level = 'fair'; label = 'Fair — manageable for most';
   }
+  if (sea == null) label += ' (wind only — no wave data)';
   statusEl.textContent = label;
   statusEl.className = 'bar-status ' + level;
 
   const lines = [];
-  lines.push(`Wind ${cardinal(obs.windDir)} ${fmt(wind,0)} kt${obs.gustKt > wind+1 ? ', gusts ' + fmt(gust,0) + ' kt' : ''}`);
-  lines.push(`Seas ${fmt(sea,1)} ft @ ${fmt(period,0)}s${period < 8 && sea >= 3 ? ' (steep, choppy)' : period >= 12 ? ' (long-period swell)' : ''}`);
+  lines.push(`Wind ${cardinal(obs.windDir)} ${fmt(wind,0)} kt${obs.gustKt > wind+1 ? ', gusts ' + fmt(gust,0) + ' kt' : ''}  · from 46087`);
+  if (sea != null) {
+    const src = (waveObs === obs) ? '46087' : waveSource.station.id + ' ' + waveSource.station.name + ` (${waveSource.station.dist.toFixed(0)} mi)`;
+    const note = (period != null && period < 8 && sea >= 3) ? ' (steep, choppy)'
+               : (period != null && period >= 12) ? ' (long-period swell)' : '';
+    lines.push(`Seas ${fmt(sea,1)} ft${period != null ? ' @ ' + fmt(period,0) + 's' : ''}${note}  · from ${src}`);
+  } else {
+    lines.push('Seas — no wave data from any nearby buoy right now');
+  }
   if (obs.pres != null) {
     lines.push(`Pressure ${fmt(obs.pres,1)} hPa`);
   }
@@ -381,59 +408,20 @@ function updateSST(results) {
 // ============ NWS ZONE FORECAST ============
 async function loadForecast() {
   const el = document.getElementById('forecast');
+  // Try the zone forecast endpoint first
   const url = `https://api.weather.gov/zones/forecast/${FORECAST_ZONE}/forecast`;
-  const data = await fetchJSON(url, { 'Accept': 'application/geo+json' });
-  if (!data || !data.properties || !data.properties.periods) {
-    el.innerHTML = '<span class="err">Could not load NWS forecast. Try again.</span>';
-    return;
-  }
-  const periods = data.properties.periods.slice(0, 6);
-  el.innerHTML = periods.map(p =>
-    `<div style="margin-bottom:8px;"><b style="color:#9cc4ff;">${p.name}</b><br>${p.detailedForecast}</div>`
-  ).join('');
-}
-
-// ============ TIDES ============
-async function loadTides() {
-  const el = document.getElementById('tides');
-  const now = new Date();
-  const fmtDate = (d) => d.toISOString().slice(0,10).replace(/-/g,'');
-  const end = new Date(now.getTime() + 48*3600*1000);
-  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=predictions&application=tatoosh_app&begin_date=${fmtDate(now)}&end_date=${fmtDate(end)}&datum=MLLW&station=${TIDE_STATION}&time_zone=lst_ldt&units=english&interval=hilo&format=json`;
-  const data = await fetchJSON(url);
-  if (!data || !data.predictions) {
-    el.innerHTML = '<span class="err">Could not load tides.</span>';
-    return;
-  }
-  el.innerHTML = data.predictions.map(p => {
-    const d = new Date(p.t.replace(' ','T'));
-    const day = d.toLocaleDateString([], { weekday:'short', month:'short', day:'numeric' });
-    const time = d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
-    const type = p.type === 'H' ? 'High' : 'Low';
-    const color = p.type === 'H' ? '#9cc4ff' : '#ffd966';
-    return `<div class="tide-row"><span class="t">${day} ${time}</span><span style="color:${color}"><b>${type}</b> ${parseFloat(p.v).toFixed(1)} ft</span></div>`;
-  }).join('');
-}
-
-// ============ MAIN ============
-async function loadAll() {
-  document.getElementById('updated').textContent = 'Loading…';
-  await Promise.all([loadStations(), loadForecast(), loadTides()]);
-  const now = new Date();
-  document.getElementById('updated').textContent =
-    'Last updated ' + now.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
-}
-
-// Register service worker for PWA
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(()=>{});
-  });
-}
-
-loadAll();
-// Auto-refresh every 10 minutes when visible
-setInterval(() => { if (!document.hidden) loadAll(); }, 10*60*1000);
-</script>
-</body>
-</html>
+  let data = await fetchJSON(url);
+  let periods = data && data.properties && data.properties.periods;
+  // Fall back: NWS sometimes returns empty for marine zones. Try the products endpoint.
+  if (!periods || !periods.length) {
+    const prodUrl = `https://api.weather.gov/products/types/CWF/locations/SEW`;
+    const prodList = await fetchJSON(prodUrl);
+    const prodId = prodList && prodList['@graph'] && prodList['@graph'][0] && prodList['@graph'][0].id;
+    if (prodId) {
+      const prod = await fetchJSON(`https://api.weather.gov/products/${prodId}`);
+      if (prod && prod.productText) {
+        el.innerHTML = `<pre style="white-space:pre-wrap;font-family:inherit;margin:0;font-size:13px;">${prod.productText.slice(0,3000)}</pre>`;
+        return;
+      }
+    }
+    el.innerHTML = '<span class="err">Could not load NWS forecast. P
